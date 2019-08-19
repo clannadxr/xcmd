@@ -89,6 +89,8 @@ func runXCMD(cmd *cobra.Command, args []string) {
 		token chan struct{}
 	)
 	token = make(chan struct{}, cfg.MaxProcess) //最多并发 x 个脚本进程
+	done := make(chan bool, 1)
+	knock(done)
 	for _, name := range xCMDs.names {
 		token <- struct{}{}
 		wg.Add(1)
@@ -108,8 +110,6 @@ func runXCMD(cmd *cobra.Command, args []string) {
 			xCMDs.mu.Unlock()
 		}(name)
 	}
-	done := make(chan bool, 1)
-	knock(done)
 	wg.Wait()
 	done <- true
 	//全部结束

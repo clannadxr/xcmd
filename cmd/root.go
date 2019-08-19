@@ -175,7 +175,7 @@ func parseCommands() (*xcmdWrapper, error) {
 		// 1. 脚本超时 直接 kill 掉
 		// 2. 脚本一定时间无输出， kill 掉
 		args := strings.Split(cmdStr, " ")
-		ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(time.Second*20))
+		ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(time.Second*cfg.ContextDeadline))
 		cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 		out := &util.Buffer{}
 		cmd.Stdout = out

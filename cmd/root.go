@@ -23,12 +23,13 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"os/signal"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/clannadxr/xcmd/util"
-
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -175,7 +176,8 @@ func parseCommands() (*xcmdWrapper, error) {
 		// 1. 脚本超时 直接 kill 掉
 		// 2. 脚本一定时间无输出， kill 掉
 		args := strings.Split(cmdStr, " ")
-		ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(time.Second*cfg.ContextDeadline))
+		ctx := interruptWatcher(context.Background())
+		ctx, cancel := context.WithDeadline(ctx, time.Now().Add(time.Second*cfg.ContextDeadline))
 		cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 		out := &util.Buffer{}
 		cmd.Stdout = out
@@ -238,4 +240,17 @@ func initConfig() {
 	if err != nil {
 		panic(err)
 	}
+}
+
+// 用于生成一个带cancel的ctx，并拦截系统的interrupt，调用cancel 以方便应用做退出前的工作
+func interruptWatcher(pctx context.Context) context.Context {
+	ctx, cancel := context.WithCancel(pctx)
+	go func() {
+		ch := make(chan os.Signal, 1)
+		signal.Notify(ch, os.Interrupt, syscall.SIGINT, os.Kill, syscall.SIGKILL, syscall.SIGTERM)
+		sig := <-ch
+		fmt.Printf("got %s signal, shutting down\n", sig)
+		cancel()
+	}()
+	return ctx
 }

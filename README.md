@@ -21,6 +21,7 @@
 * 僵尸进程检测: --outputCheckDeadline=30 (30s内无任何输出，包括stdout和stderr，将会被kill掉)
 * 定时向std输出文本，防止主进程被当成无输出脚本关闭: --knockInterval=2
 * 顺序输出所有脚本的标准输出
+* 优雅退出，收到系统退出指令后，终端子进程并输出子进程的std后再退出主进程
 
 ### TODO
 * 将子进程设置为一个进程组，采用syscall来杀死进程组

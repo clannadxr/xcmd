@@ -45,11 +45,12 @@ type config struct {
 }
 
 type xcmd struct {
-	command     *exec.Cmd
-	name        string
-	out         *util.Buffer
-	err         error
-	outputCheck func(*xcmd)
+	command        *exec.Cmd
+	name           string
+	out            *util.Buffer
+	err            error
+	outputCheck    func(*xcmd)
+	handleShutdown func(*xcmd)
 }
 
 type xcmdWrapper struct {
@@ -105,6 +106,7 @@ func runXCMD(cmd *cobra.Command, args []string) {
 			xCMD := xCMDs.commands[commandName]
 			xCMDs.mu.RUnlock()
 			xCMD.outputCheck(&xCMD)
+			xCMD.handleShutdown(&xCMD)
 			xCMD.err = xCMD.command.Run()
 			xCMDs.mu.Lock()
 			xCMDs.commands[commandName] = xCMD
@@ -176,9 +178,8 @@ func parseCommands() (*xcmdWrapper, error) {
 		// 1. 脚本超时 直接 kill 掉
 		// 2. 脚本一定时间无输出， kill 掉
 		args := strings.Split(cmdStr, " ")
-		ctx := interruptWatcher(context.Background())
-		ctx, cancel := context.WithDeadline(ctx, time.Now().Add(time.Second*cfg.ContextDeadline))
-		cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 		out := &util.Buffer{}
 		cmd.Stdout = out
 		cmd.Stderr = out
@@ -191,7 +192,7 @@ func parseCommands() (*xcmdWrapper, error) {
 					if newLen == oldLen {
 						// 无输出
 						log.Printf("脚本 %s 因为长时间没有输出，被直接关闭!", cmd.name)
-						cancel()
+						syscall.Kill(-cmd.command.Process.Pid, syscall.SIGKILL)
 						return
 					} else {
 						oldLen = newLen
@@ -199,11 +200,23 @@ func parseCommands() (*xcmdWrapper, error) {
 				}
 			}()
 		}
+		ctx := interruptWatcher(context.Background())
+		ctx, _ = context.WithDeadline(ctx, time.Now().Add(time.Second*cfg.ContextDeadline))
+		handleShutdown := func(cmd *xcmd) {
+			go func() {
+				<-ctx.Done()
+				if cmd.command.Process == nil || cmd.command.ProcessState != nil {
+					return
+				}
+				syscall.Kill(-cmd.command.Process.Pid, syscall.SIGKILL)
+			}()
+		}
 		xCMDs.commands[cmdStr] = xcmd{
-			command:     cmd,
-			out:         out,
-			name:        cmdStr,
-			outputCheck: outputCheck,
+			command:        cmd,
+			out:            out,
+			name:           cmdStr,
+			outputCheck:    outputCheck,
+			handleShutdown: handleShutdown,
 		}
 	}
 	return xCMDs, nil

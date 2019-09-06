@@ -49,8 +49,9 @@ type xcmd struct {
 	name           string
 	out            *util.Buffer
 	err            error
-	outputCheck    func(*xcmd, <-chan struct{})
+	outputCheck    func(*xcmd)
 	handleShutdown func(*xcmd)
+	stop           chan struct{}
 }
 
 type xcmdWrapper struct {
@@ -106,9 +107,11 @@ func runXCMD(cmd *cobra.Command, args []string) {
 			xCMDs.mu.RLock()
 			xCMD := xCMDs.commands[commandName]
 			xCMDs.mu.RUnlock()
-			xCMD.outputCheck(&xCMD, stopChan)
+			xCMD.stop = make(chan struct{})
+			xCMD.outputCheck(&xCMD)
 			xCMD.handleShutdown(&xCMD)
 			xCMD.err = xCMD.command.Run()
+			close(xCMD.stop)
 			xCMDs.mu.Lock()
 			xCMDs.commands[commandName] = xCMD
 			xCMDs.mu.Unlock()
@@ -184,13 +187,13 @@ func parseCommands() (*xcmdWrapper, error) {
 		out := &util.Buffer{}
 		cmd.Stdout = out
 		cmd.Stderr = out
-		outputCheck := func(cmd *xcmd, stop <-chan struct{}) {
+		outputCheck := func(cmd *xcmd) {
 			go func() {
 				oldLen := 0
 				for {
 					time.Sleep(time.Second * cfg.OutputCheckDeadline)
 					select {
-					case <-stop:
+					case <-cmd.stop:
 						return
 					default:
 					}

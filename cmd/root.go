@@ -49,7 +49,7 @@ type xcmd struct {
 	name           string
 	out            *util.Buffer
 	err            error
-	outputCheck    func(*xcmd)
+	outputCheck    func(*xcmd, <-chan struct{})
 	handleShutdown func(*xcmd)
 }
 
@@ -87,12 +87,13 @@ func runXCMD(cmd *cobra.Command, args []string) {
 	}
 
 	var (
-		wg    sync.WaitGroup
-		token chan struct{}
+		wg       sync.WaitGroup
+		token    chan struct{}
+		stopChan chan struct{}
 	)
+	stopChan = make(chan struct{})
 	token = make(chan struct{}, cfg.MaxProcess) //最多并发 x 个脚本进程
-	done := make(chan bool, 1)
-	knock(done)
+	knock(stopChan)
 	for _, name := range xCMDs.names {
 		token <- struct{}{}
 		wg.Add(1)
@@ -105,7 +106,7 @@ func runXCMD(cmd *cobra.Command, args []string) {
 			xCMDs.mu.RLock()
 			xCMD := xCMDs.commands[commandName]
 			xCMDs.mu.RUnlock()
-			xCMD.outputCheck(&xCMD)
+			xCMD.outputCheck(&xCMD, stopChan)
 			xCMD.handleShutdown(&xCMD)
 			xCMD.err = xCMD.command.Run()
 			xCMDs.mu.Lock()
@@ -114,7 +115,7 @@ func runXCMD(cmd *cobra.Command, args []string) {
 		}(name)
 	}
 	wg.Wait()
-	done <- true
+	close(stopChan)
 	//全部结束
 	var allSuccess = true
 	for _, name := range xCMDs.names {
@@ -183,11 +184,16 @@ func parseCommands() (*xcmdWrapper, error) {
 		out := &util.Buffer{}
 		cmd.Stdout = out
 		cmd.Stderr = out
-		outputCheck := func(cmd *xcmd) {
+		outputCheck := func(cmd *xcmd, stop <-chan struct{}) {
 			go func() {
 				oldLen := 0
 				for {
 					time.Sleep(time.Second * cfg.OutputCheckDeadline)
+					select {
+					case <-stop:
+						return
+					default:
+					}
 					newLen := len(cmd.out.Bytes())
 					if newLen == oldLen {
 						// 无输出
@@ -222,8 +228,8 @@ func parseCommands() (*xcmdWrapper, error) {
 	return xCMDs, nil
 }
 
-func knock(ch <-chan bool) {
-	go func(done <-chan bool) {
+func knock(ch <-chan struct{}) {
+	go func(done <-chan struct{}) {
 		for {
 			time.Sleep(time.Second * cfg.KnockInterval)
 			select {
